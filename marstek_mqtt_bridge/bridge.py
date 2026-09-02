@@ -140,6 +140,20 @@ class MarstekBridge:
             value = "ON" if value else "OFF"
         self.mqttc.publish(self.reg.state_topic(object_id), str(value), retain=False)
 
+    def _feedback(self, base_object_id: str, success: bool, detail: str = ""):
+        """Publish an explicit success/failure result for a command entity so
+        HA never has to guess whether a write actually took effect."""
+        text = "OK" if success else f"FAILED: {detail}" if detail else "FAILED"
+        self.publish_state(f"{base_object_id}_feedback", text)
+
+    def _iid(self, key: str) -> int:
+        """Resolve the params 'id' (instance id) to use for a given endpoint.
+        See README "Assumptions" #3 - defaults to 0 (shared) unless the
+        per-endpoint experiment is switched on in the add-on options."""
+        if not self.cfg.get("use_per_endpoint_instance_ids"):
+            return 0
+        return int(self.cfg.get(f"instance_id_{key}", 0))
+
     # ------------------------------------------------------------- Commands
 
     def _on_message(self, client, userdata, msg):
@@ -160,31 +174,62 @@ class MarstekBridge:
     def _handle_command(self, object_id: str, payload: str):
         if object_id == "dod":
             value = int(float(payload))
-            result = self.udp.dod_set(value)
-            if result.get("set_result"):
+            try:
+                result = self.udp.dod_set(value)
+            except MarstekUDPError as exc:
+                self._feedback("dod", False, str(exc))
+                self._set_comm_status(False)
+                return
+            ok = bool(result.get("set_result"))
+            if ok:
                 self.publish_state("dod", value)
+            self._feedback("dod", ok, "" if ok else "device rejected value")
             self._set_comm_status(True)
 
         elif object_id == "ble_block":
             enable = 1 if payload.upper() == "ON" else 0
-            result = self.udp.ble_adv_set(enable)
-            if result.get("set_result"):
+            try:
+                result = self.udp.ble_adv_set(enable)
+            except MarstekUDPError as exc:
+                self._feedback("ble_block", False, str(exc))
+                self._set_comm_status(False)
+                return
+            ok = bool(result.get("set_result"))
+            if ok:
                 self.publish_state("ble_block", payload.upper())
+            self._feedback("ble_block", ok, "" if ok else "device rejected value")
             self._set_comm_status(True)
 
         elif object_id == "led_ctrl":
             state = 1 if payload.upper() == "ON" else 0
-            result = self.udp.led_ctrl_set(state)
-            if result.get("set_result"):
+            try:
+                result = self.udp.led_ctrl_set(state)
+            except MarstekUDPError as exc:
+                self._feedback("led_ctrl", False, str(exc))
+                self._set_comm_status(False)
+                return
+            ok = bool(result.get("set_result"))
+            if ok:
                 self.publish_state("led_ctrl", payload.upper())
+            self._feedback("led_ctrl", ok, "" if ok else "device rejected value")
             self._set_comm_status(True)
 
         elif object_id == "energy_mode":
             mode = payload.strip()
-            config = self._build_set_mode_config(mode)
-            result = self.udp.es_set_mode(config)
-            if result.get("set_result"):
+            try:
+                config = self._build_set_mode_config(mode)
+                result = self.udp.es_set_mode(config)
+            except MarstekUDPError as exc:
+                self._feedback("energy_mode", False, str(exc))
+                self._set_comm_status(False)
+                return
+            except ValueError as exc:
+                self._feedback("energy_mode", False, str(exc))
+                return
+            ok = bool(result.get("set_result"))
+            if ok:
                 self.publish_state("energy_mode", mode)
+            self._feedback("energy_mode", ok, "" if ok else "device rejected mode")
             self._set_comm_status(True)
 
         elif object_id == "energy_mode_passive_power":
@@ -194,6 +239,21 @@ class MarstekBridge:
         elif object_id == "energy_mode_passive_cd_time":
             self._passive_cd_time = int(float(payload))
             self.publish_state("energy_mode_passive_cd_time", self._passive_cd_time)
+
+        elif object_id == "bat_status_refresh":
+            self._safe_poll_bat()
+        elif object_id == "es_status_refresh":
+            self._safe_poll_es_status()
+        elif object_id == "es_mode_refresh":
+            self._safe_poll_es_mode()
+        elif object_id == "pv_status_refresh":
+            self._safe_poll_pv()
+        elif object_id == "wifi_status_refresh":
+            self._safe_poll_wifi()
+        elif object_id == "ble_status_refresh":
+            self._safe_poll_ble()
+        elif object_id == "em_status_refresh":
+            self._safe_poll_em()
 
         else:
             self.log.warning("Unknown command object_id: %s", object_id)
@@ -268,6 +328,14 @@ class MarstekBridge:
         R.register("binary_sensor", "communication_fail", "Communication Fail", sysg,
                     device_class="problem")
 
+        # Explicit command-result feedback (requested: don't silently swallow failures)
+        R.register("sensor", "dod_feedback", "DOD Set Feedback", sysg,
+                    entity_category="diagnostic", icon="mdi:message-alert-outline")
+        R.register("sensor", "ble_block_feedback", "Bluetooth Lock Set Feedback", sysg,
+                    entity_category="diagnostic", icon="mdi:message-alert-outline")
+        R.register("sensor", "led_ctrl_feedback", "Panel LED Set Feedback", sysg,
+                    entity_category="diagnostic", icon="mdi:message-alert-outline")
+
         # --- Marstek Battery ----------------------------------------------
         R.register("sensor", "bat_soc", "Battery SOC", batg, unit="%", device_class="battery",
                     state_class="measurement")
@@ -334,6 +402,24 @@ class MarstekBridge:
                     min_value=-2500, max_value=2500, step=1)
         R.register("number", "energy_mode_passive_cd_time", "Passive Mode: Countdown", ecg, unit="s",
                     min_value=0, max_value=86400, step=1)
+        R.register("sensor", "energy_mode_feedback", "Energy Mode Set Feedback", ecg,
+                    entity_category="diagnostic", icon="mdi:message-alert-outline")
+
+        # --- Manual refresh buttons ------------------------------------------
+        # Only exposed for endpoints whose poll interval is set to 0 (polling
+        # disabled), so you can still refresh them on demand from HA.
+        refresh_buttons = [
+            ("bat_status_refresh", "Refresh Battery Status", batg, "poll_interval_bat_status"),
+            ("es_status_refresh", "Refresh Energy Status", esg, "poll_interval_es_status"),
+            ("es_mode_refresh", "Refresh Energy Mode", emg, "poll_interval_es_mode"),
+            ("pv_status_refresh", "Refresh PV Status", pvg, "poll_interval_pv_status"),
+            ("wifi_status_refresh", "Refresh WiFi Status", sysg, "poll_interval_wifi_status"),
+            ("ble_status_refresh", "Refresh Bluetooth Status", sysg, "poll_interval_ble_status"),
+            ("em_status_refresh", "Refresh Energy Meter Status", esg, "poll_interval_em_status"),
+        ]
+        for object_id, name, group, interval_key in refresh_buttons:
+            if int(cfg.get(interval_key, 1)) == 0:
+                R.register("button", object_id, name, group, icon="mdi:refresh")
 
     # ------------------------------------------------------------- Init sequence
 
@@ -406,7 +492,7 @@ class MarstekBridge:
 
     def _safe_poll_wifi(self):
         try:
-            s = self.udp.wifi_get_status()
+            s = self.udp.wifi_get_status(self._iid("wifi"))
             self.publish_state("wifi_ssid", s.get("ssid"))
             self.publish_state("wifi_rssi", s.get("rssi"))
             self.publish_state("wifi_ip", s.get("sta_ip"))
@@ -417,7 +503,7 @@ class MarstekBridge:
 
     def _safe_poll_ble(self):
         try:
-            s = self.udp.ble_get_status()
+            s = self.udp.ble_get_status(self._iid("ble"))
             self.publish_state("ble_state", s.get("state"))
             self._set_comm_status(True)
         except MarstekUDPError as exc:
@@ -426,7 +512,7 @@ class MarstekBridge:
 
     def _safe_poll_bat(self):
         try:
-            s = self.udp.bat_get_status()
+            s = self.udp.bat_get_status(self._iid("bat"))
             self.publish_state("bat_soc", s.get("soc"))
             self.publish_state("bat_charg_flag", s.get("charg_flag"))
             self.publish_state("bat_dischrg_flag", s.get("dischrg_flag"))
@@ -440,7 +526,7 @@ class MarstekBridge:
 
     def _safe_poll_pv(self):
         try:
-            s = self.udp.pv_get_status()
+            s = self.udp.pv_get_status(self._iid("pv"))
             for i in (1, 2, 3, 4):
                 self.publish_state(f"pv{i}_power", s.get(f"pv{i}_power"))
                 self.publish_state(f"pv{i}_voltage", s.get(f"pv{i}_voltage"))
@@ -453,7 +539,7 @@ class MarstekBridge:
 
     def _safe_poll_es_status(self):
         try:
-            s = self.udp.es_get_status()
+            s = self.udp.es_get_status(self._iid("es_status"))
             self.publish_state("es_bat_soc", s.get("bat_soc"))
             self.publish_state("es_bat_cap", s.get("bat_cap"))
             self.publish_state("es_pv_power", s.get("pv_power"))
@@ -471,7 +557,7 @@ class MarstekBridge:
 
     def _safe_poll_es_mode(self):
         try:
-            s = self.udp.es_get_mode()
+            s = self.udp.es_get_mode(self._iid("es_mode"))
             self.publish_state("em_mode", s.get("mode"))
             self.publish_state("energy_mode", s.get("mode"))  # keep select in sync
             self.publish_state("em_ongrid_power", s.get("ongrid_power"))
@@ -491,7 +577,7 @@ class MarstekBridge:
 
     def _safe_poll_em(self):
         try:
-            self.udp.em_get_status()
+            self.udp.em_get_status(self._iid("em"))
             self._set_comm_status(True)
         except MarstekUDPError as exc:
             self.log.warning("EM.GetStatus failed: %s", exc)

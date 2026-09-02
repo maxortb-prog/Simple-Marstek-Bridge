@@ -99,10 +99,13 @@ class EntityRegistry:
             "name": name,
             "unique_id": uid,
             "object_id": uid,
-            "state_topic": self.state_topic(object_id),
             "availability_topic": self.availability_topic(),
             "device": device.ha_device_block(self.base_id),
         }
+        # MQTT "button" entities are stateless (command_topic + payload_press only) -
+        # HA's schema for them doesn't accept state_topic, so it's omitted for those.
+        if component != "button":
+            payload["state_topic"] = self.state_topic(object_id)
         if device_class:
             payload["device_class"] = device_class
         if unit:
@@ -138,11 +141,15 @@ class EntityRegistry:
             if step is not None:
                 payload["step"] = step
 
+        if component == "button":
+            payload["command_topic"] = self.command_topic(object_id)
+            payload["payload_press"] = "PRESS"
+
         entry = {
             "component": component,
             "object_id": object_id,
             "payload": payload,
-            "commandable": commandable or component in ("switch", "select", "number"),
+            "commandable": commandable or component in ("switch", "select", "number", "button"),
         }
         self._entities[object_id] = entry
         return entry

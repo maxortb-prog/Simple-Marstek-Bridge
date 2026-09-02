@@ -1,5 +1,5 @@
 name: "Marstek MQTT Bridge"
-version: "1.0.0"
+version: "1.0.1"
 slug: "marstek_mqtt_bridge"
 description: "UDP <-> MQTT bridge for Marstek battery devices (self-consumption control via Marstek Open API Rev 2.0)"
 url: "https://github.com/<your-github-user>/marstek-mqtt-bridge"
@@ -45,6 +45,20 @@ options:
   poll_interval_ble_status: 60
   poll_interval_em_status: 30
 
+  # --- Instance-id experiment (see README "Assumptions", point 3) ---
+  # The docs are unclear whether "id" inside params is a shared/global value or
+  # per-battery-module. Default keeps current, known-working behavior (id: 0
+  # everywhere). Flip use_per_endpoint_instance_ids on to try distinct ids per
+  # call type.
+  use_per_endpoint_instance_ids: false
+  instance_id_wifi: 0
+  instance_id_ble: 0
+  instance_id_bat: 0
+  instance_id_pv: 0
+  instance_id_es_status: 0
+  instance_id_es_mode: 0
+  instance_id_em: 0
+
   log_level: "info"
 
 schema:
@@ -71,5 +85,14 @@ schema:
   poll_interval_wifi_status: int(0,3600)
   poll_interval_ble_status: int(0,3600)
   poll_interval_em_status: int(0,3600)
+
+  use_per_endpoint_instance_ids: bool
+  instance_id_wifi: int(0,255)
+  instance_id_ble: int(0,255)
+  instance_id_bat: int(0,255)
+  instance_id_pv: int(0,255)
+  instance_id_es_status: int(0,255)
+  instance_id_es_mode: int(0,255)
+  instance_id_em: int(0,255)
 
   log_level: list(debug|info|warning|error)

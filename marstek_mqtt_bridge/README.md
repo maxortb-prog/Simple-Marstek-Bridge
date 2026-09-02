@@ -63,6 +63,31 @@ Uses paho-mqtt's own reconnect (`reconnect_delay_set`, LWT on `.../bridge/status
 10s watchdog loop that force-calls `reconnect()` if the client thinks it's disconnected —
 matches the "Watchdog = true" behavior you referenced.
 
+## Command feedback (1.0.1+)
+
+`dod`, `ble_block`, `led_ctrl`, and `energy_mode` each publish a companion diagnostic sensor
+(`<name>_feedback`) after every write attempt: `OK` on a confirmed `set_result: true`,
+`FAILED: <reason>` otherwise (device rejection or UDP timeout after all 5 retries). Watch
+these if a change you make in HA doesn't seem to stick.
+
+## Manual refresh buttons (1.0.1+)
+
+Set any `poll_interval_*` option to `0` to disable that endpoint's automatic polling — doing
+so automatically adds a matching `button` entity (e.g. "Refresh Battery Status") in the
+corresponding device group, so you can still poll it on demand. Buttons only appear for
+endpoints where the interval is `0`, to avoid cluttering the UI when periodic polling is
+already active.
+
+## Per-endpoint instance IDs — experimental (1.0.1+)
+
+The API docs are unclear on what the `id` field inside `params` actually addresses (e.g. for
+multi-module battery stacks). By default every call still uses `id: 0` (matches all worked
+examples in the docs). Set `use_per_endpoint_instance_ids: true` and adjust the
+`instance_id_wifi` / `instance_id_ble` / `instance_id_bat` / `instance_id_pv` /
+`instance_id_es_status` / `instance_id_es_mode` / `instance_id_em` options to experiment —
+useful if you find your device actually needs distinct ids per call type. Flip the toggle
+back off to instantly revert to the known-good default.
+
 ## Assumptions / open questions
 
 Your spec was excellent but a few spots were either ambiguous or left a value unspecified. I
