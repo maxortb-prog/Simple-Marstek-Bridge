@@ -1,6 +1,14 @@
 # Changelog
 
 ## 1.0.1
+- **Fix: command topics were never subscribed on first connect.** `_on_connect` iterated
+  the entity registry to subscribe to command topics, but the very first MQTT connect
+  happens *before* `initialize()`/`build_discovery()` populates that registry — so the
+  subscribe loop ran over an empty list and no command (buttons, DOD, BLE lock, LED,
+  energy mode select) ever reached the bridge until an unrelated MQTT reconnect happened to
+  occur afterwards. Fixed by explicitly calling the (new) `subscribe_all_commands()` right
+  after discovery is published in `initialize()`, in addition to keeping it in `_on_connect`
+  for actual reconnects.
 - Command feedback: `dod`, `ble_block`, `led_ctrl`, `energy_mode` now publish an explicit
   `*_feedback` diagnostic sensor (`OK` / `FAILED: <reason>`) after every write, instead of
   silently doing nothing on a failed `set_result` or a UDP timeout.

@@ -100,15 +100,26 @@ class MarstekBridge:
             self.log.info("MQTT connected.")
             self._connected.set()
             client.publish(self.reg.availability_topic(), payload="online", retain=True)
-            # (Re-)subscribe to all command topics - important after a reconnect too.
-            for entry in self.reg.all_entities():
-                if entry["commandable"]:
-                    topic = self.reg.command_topic(entry["object_id"])
-                    client.subscribe(topic)
-                    self.log.debug("Subscribed to %s", topic)
+            self.subscribe_all_commands()
         else:
             self.log.error("MQTT connect failed, rc=%s", rc)
             self._connected.clear()
+
+    def subscribe_all_commands(self):
+        """(Re-)subscribe to every commandable entity's command topic. Called
+        from _on_connect (covers reconnects) AND explicitly right after
+        discovery is (re-)built in initialize() - the very first connect
+        happens before any entities exist yet, so on_connect alone is not
+        enough to catch the initial subscription."""
+        count = 0
+        for entry in self.reg.all_entities():
+            if entry["commandable"]:
+                topic = self.reg.command_topic(entry["object_id"])
+                self.mqttc.subscribe(topic)
+                self.log.debug("Subscribed to %s", topic)
+                count += 1
+        if count:
+            self.log.info("Subscribed to %d command topic(s).", count)
 
     def _on_disconnect(self, client, userdata, rc):
         self._connected.clear()
@@ -447,6 +458,7 @@ class MarstekBridge:
 
         self.build_discovery(device)
         self.publish_discovery_all()
+        self.subscribe_all_commands()
         self._set_comm_status(True)
 
         self.publish_state("device_type", device.get("device"))
