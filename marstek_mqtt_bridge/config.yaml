@@ -1,0 +1,75 @@
+name: "Marstek MQTT Bridge"
+version: "1.0.0"
+slug: "marstek_mqtt_bridge"
+description: "UDP <-> MQTT bridge for Marstek battery devices (self-consumption control via Marstek Open API Rev 2.0)"
+url: "https://github.com/<your-github-user>/marstek-mqtt-bridge"
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+init: false
+startup: services
+boot: auto
+hassio_api: false
+homeassistant_api: false
+host_network: false
+
+# Only used if you are NOT running the official MQTT add-on / core-mosquitto and want
+# a filesystem "options" fallback. In normal operation options.json is provided by HA.
+options:
+  device_ip: "192.168.0.45"
+  device_udp_port: 30000
+  device_ble_mac: ""
+  device_type: ""
+  mqtt_host: "core-mosquitto"
+  mqtt_port: 1883
+  mqtt_username: "mqtt-marstek"
+  mqtt_password: "mqtt-marstek"
+  mqtt_discovery_prefix: "homeassistant"
+  mqtt_base_topic: "Marstek-Bridge-Control"
+  mqtt_suggested_area: "Marstek"
+
+  # --- Init-only values (device has no "get" for these, only "set") ---
+  dod_init_value: 88
+  ble_block_init_enable: true
+  led_init_state: false
+
+  # --- Poll intervals, seconds. 0 = disabled ---
+  poll_interval_bat_status: 30
+  poll_interval_es_status: 15
+  poll_interval_es_mode: 30
+  poll_interval_pv_status: 30
+  poll_interval_wifi_status: 60
+  poll_interval_ble_status: 60
+  poll_interval_em_status: 30
+
+  log_level: "info"
+
+schema:
+  device_ip: str
+  device_udp_port: port
+  device_ble_mac: str
+  device_type: str
+  mqtt_host: str
+  mqtt_port: port
+  mqtt_username: str
+  mqtt_password: password
+  mqtt_discovery_prefix: str
+  mqtt_base_topic: str
+  mqtt_suggested_area: str
+
+  dod_init_value: int(30,88)
+  ble_block_init_enable: bool
+  led_init_state: bool
+
+  poll_interval_bat_status: int(0,3600)
+  poll_interval_es_status: int(0,3600)
+  poll_interval_es_mode: int(0,3600)
+  poll_interval_pv_status: int(0,3600)
+  poll_interval_wifi_status: int(0,3600)
+  poll_interval_ble_status: int(0,3600)
+  poll_interval_em_status: int(0,3600)
+
+  log_level: list(debug|info|warning|error)
